@@ -1,0 +1,19 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Secrets
+.env
+credentials.json
+token.json
+
+# Output
+output/
+
+# Temp
+README_temp.pdf
+
+.env.save
+bot.log
+.DS_Store

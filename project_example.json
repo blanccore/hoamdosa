@@ -1,0 +1,24 @@
+{
+  "script_file": "script.txt",
+  "heygen_video": "",
+  "heygen_avatar_look_id": "e4fcc2a609984b0bbfb77756058df428",
+  "elevenlabs_voice_id": "9K4JIgODYieLEt4nOY4a",
+  "pip_images": [],
+  "subtitles_srt": "subtitles.srt",
+  "original_script": "original_script.txt",
+  "bgm_file": "",
+  "output_dir": "./output",
+  "settings": {
+    "silence_threshold": -35,
+    "silence_min_duration": 0.5,
+    "bgm_volume": 0.15,
+    "subtitle_fontsize": 48,
+    "subtitle_outline_width": 3,
+    "pip_position": "top-left",
+    "pip_scale": 0.30,
+    "tts_stability": 0.7,
+    "tts_similarity": 0.8,
+    "tts_style": 0.3,
+    "tts_speed": 0.85
+  }
+}

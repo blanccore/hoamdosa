@@ -1,0 +1,8 @@
+requests
+python-dotenv
+python-telegram-bot
+google-auth-oauthlib
+google-api-python-client
+yt-dlp
+google-genai
+openai-whisper
