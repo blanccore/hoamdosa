@@ -30,7 +30,7 @@ async function checkStatus() {
     }
 }
 checkStatus();
-setInterval(checkStatus, 30000);
+setInterval(checkStatus, 6 * 60 * 60 * 1000); // 6시간
 
 // ── 음성 업로드 ──
 const uploadZone = document.getElementById('upload-zone');

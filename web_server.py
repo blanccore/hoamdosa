@@ -143,16 +143,26 @@ async def process_audio(
         pass
 
     from silence_remover import get_duration
-    orig_dur = get_duration(speed_path) if os.path.exists(speed_path) else 0
     new_dur = get_duration(final_path)
 
-    return {
+    result = {
         "audio": f"/api/download/{Path(final_path).name}",
         "srt": f"/api/download/{Path(srt_path).name}" if srt_path else None,
         "duration": round(new_dur, 1),
         "silences_count": len(silences),
         "speed": speed,
     }
+
+    # 텔레그램 알림
+    try:
+        from telegram_notifier import notify_audio_result
+        await loop.run_in_executor(None, lambda: notify_audio_result(
+            final_path, srt_path, result
+        ))
+    except Exception as e:
+        print(f"[WEB] 텔레그램 알림 실패: {e}")
+
+    return result
 
 
 # ── API: 유튜브 스크립트 ──
@@ -170,13 +180,24 @@ async def youtube_script(url: str = Form(...)):
         None, lambda: generate_keywords(result["sentences"])
     )
 
-    return {
+    response = {
         "title": result["title"],
         "script": result["script"],
         "sentences": result["sentences"],
         "method": result["method"],
         "keywords": keywords,
     }
+
+    # 텔레그램 알림
+    try:
+        from telegram_notifier import send_message
+        from keyword_generator import format_keywords_text
+        msg = f"📹 *{result['title']}*\n\n{result['script'][:500]}\n\n🔍 *검색어*\n{format_keywords_text(keywords)[:1000]}"
+        await loop.run_in_executor(None, lambda: send_message(msg))
+    except Exception as e:
+        print(f"[WEB] 텔레그램 알림 실패: {e}")
+
+    return response
 
 
 # ── API: 대본 → 검색어 ──
@@ -193,6 +214,15 @@ async def generate_keywords_api(text: str = Form(...)):
     keywords = await loop.run_in_executor(
         None, lambda: generate_keywords(sentences)
     )
+
+    # 텔레그램 알림
+    try:
+        from telegram_notifier import send_message
+        from keyword_generator import format_keywords_text
+        msg = f"🔍 *이미지 검색어*\n\n{format_keywords_text(keywords)[:2000]}"
+        await loop.run_in_executor(None, lambda: send_message(msg))
+    except Exception as e:
+        print(f"[WEB] 텔레그램 알림 실패: {e}")
 
     return {"keywords": keywords}
 
