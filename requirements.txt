@@ -6,3 +6,6 @@ google-api-python-client
 yt-dlp
 google-genai
 openai-whisper
+fastapi
+uvicorn
+python-multipart
