@@ -341,17 +341,61 @@ def _clean_text(text):
     return text
 
 
+def _split_for_display(seg, max_chars=20):
+    """긴 세그먼트를 별도 SRT 항목으로 분할 (타이밍 비례분배)"""
+    text = seg.get("text", "").strip()
+    start = seg["start"]
+    end = seg["end"]
+
+    if len(text) <= max_chars:
+        return [seg]
+
+    mid = len(text) * 2 // 5
+
+    # 공백에서 분할
+    best_pos = None
+    for offset in range(0, min(mid, 20)):
+        for pos in [mid - offset, mid + offset]:
+            if 0 < pos < len(text) and text[pos] == " ":
+                best_pos = pos
+                break
+        if best_pos is not None:
+            break
+
+    if best_pos is None:
+        return [seg]
+
+    text1 = text[:best_pos].strip()
+    text2 = text[best_pos:].strip()
+
+    if not text1 or not text2:
+        return [seg]
+
+    ratio = len(text1) / len(text)
+    mid_time = start + (end - start) * ratio
+
+    seg1 = {"start": start, "end": mid_time, "text": text1}
+    seg2 = {"start": mid_time, "end": end, "text": text2}
+
+    # 재귀
+    return _split_for_display(seg1, max_chars) + _split_for_display(seg2, max_chars)
+
+
 def _segments_to_srt(segments: list) -> str:
-    """Whisper segments를 SRT 형식으로 변환 (무음 기준 그대로)"""
+    """Whisper segments → SRT (타이밍 유지 + 긴 텍스트 분할)"""
+    # 먼저 구두점 제거 후 분할
+    cleaned = []
+    for seg in segments:
+        cleaned_seg = {**seg, "text": _clean_text(seg.get("text", ""))}
+        if cleaned_seg["text"]:
+            cleaned.extend(_split_for_display(cleaned_seg))
+
     lines = []
-    for i, seg in enumerate(segments, 1):
+    for i, seg in enumerate(cleaned, 1):
         start = _format_timestamp(seg["start"])
         end = _format_timestamp(seg["end"])
-        text = _clean_text(seg.get("text", ""))
-        if not text:
-            continue
         lines.append(f"{i}")
         lines.append(f"{start} --> {end}")
-        lines.append(text)
+        lines.append(seg["text"])
         lines.append("")
     return "\n".join(lines)
