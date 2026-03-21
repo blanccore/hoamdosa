@@ -47,6 +47,7 @@ SETTINGS = _CONFIG.get("settings", {})
 
 # 기본 배속 (사용자별 설정 가능)
 _user_speed = {}  # {chat_id: speed}
+_user_stt_mode = {}  # {chat_id: bool}
 DEFAULT_SPEED = 1.1
 
 # 출력 디렉토리
@@ -116,6 +117,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━\n"
         "📋 *명령어*\n"
         f"`/speed 1.2` — 배속 변경 (현재: {speed}x)\n"
+        "`/stt` — SRT 전용 모드 전환\n"
         "`/history` — 최근 처리 파일 목록\n"
         "`/status` — 봇 상태 확인\n\n"
         f"🔑 Chat ID: `{chat_id}`",
@@ -127,6 +129,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """음성 메시지 또는 오디오 파일을 받아 무음 처리 후 회신"""
     if not _is_allowed(update.effective_chat.id):
         await update.message.reply_text("⛔ 권한이 없습니다.")
+        return
+
+    # STT 전용 모드면 SRT만 생성
+    chat_id = update.effective_chat.id
+    if _user_stt_mode.get(chat_id, False):
+        await _handle_stt_only(update, context)
         return
 
     # 음성메시지 or 오디오 파일 구분
@@ -485,6 +493,91 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def stt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/stt 명령어: SRT 전용 모드 토글"""
+    if not _is_allowed(update.effective_chat.id):
+        return
+    chat_id = update.effective_chat.id
+    current = _user_stt_mode.get(chat_id, False)
+    _user_stt_mode[chat_id] = not current
+    if not current:
+        await update.message.reply_text(
+            "📝 *STT 모드 ON*\n"
+            "음성 보내면 → SRT 자막만 회신\n"
+            "(배속/무음 처리 없음)\n\n"
+            "해제: /stt",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text("🎤 *일반 모드 복귀* (배속 + 무음 + SRT)", parse_mode="Markdown")
+
+
+async def _handle_stt_only(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """STT 전용: 음성 → SRT만 회신"""
+    if update.message.voice:
+        file = await update.message.voice.get_file()
+        input_ext = ".ogg"
+    elif update.message.audio:
+        file = await update.message.audio.get_file()
+        input_ext = Path(update.message.audio.file_name or "audio.mp3").suffix or ".mp3"
+    elif update.message.document:
+        file = await update.message.document.get_file()
+        input_ext = Path(update.message.document.file_name or "audio.mp3").suffix or ".mp3"
+    else:
+        return
+
+    status_msg = await update.message.reply_text("📝 자막 생성 중...")
+
+    try:
+        import subprocess
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        input_path = str(OUTPUT_DIR / f"stt_{timestamp}_input{input_ext}")
+        await file.download_to_drive(input_path)
+
+        loop = asyncio.get_event_loop()
+
+        # OGG → MP3
+        if input_ext == ".ogg":
+            mp3_path = str(OUTPUT_DIR / f"stt_{timestamp}_input.mp3")
+            await loop.run_in_executor(None, lambda: subprocess.run(
+                ["ffmpeg", "-y", "-i", input_path, "-c:a", "libmp3lame", "-b:a", "192k", mp3_path],
+                capture_output=True, timeout=600,
+            ))
+            os.remove(input_path)
+            input_path = mp3_path
+
+        # SRT 생성
+        from srt_generator import generate_srt
+        srt_path = str(OUTPUT_DIR / f"stt_{timestamp}.srt")
+        srt_path = await loop.run_in_executor(
+            None, lambda: generate_srt(input_path, srt_path)
+        )
+
+        # SRT 회신
+        with open(srt_path, "rb") as f:
+            await update.message.reply_document(
+                document=f,
+                filename=f"자막_{timestamp}.srt",
+                caption="📝 SRT 자막 (STT 모드)",
+            )
+
+        # 텍스트로도 보내기
+        with open(srt_path, "r", encoding="utf-8") as f:
+            srt_text = f.read()
+        if len(srt_text) > 4000:
+            srt_text = srt_text[:4000] + "\n...(이하 생략)"
+        await update.message.reply_text(srt_text)
+
+        await status_msg.edit_text("✅ 자막 생성 완료!")
+
+        # 정리
+        if os.path.exists(input_path):
+            os.remove(input_path)
+
+    except Exception as e:
+        await status_msg.edit_text(f"❌ 에러: {str(e)[:200]}")
+
+
 def main():
     if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "your_bot_token_here":
         print("❌ TELEGRAM_BOT_TOKEN이 설정되지 않았습니다!")
@@ -505,6 +598,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("speed", speed_command))
+    app.add_handler(CommandHandler("stt", stt_command))
     app.add_handler(CommandHandler("history", history_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("keyword", keyword_command))
