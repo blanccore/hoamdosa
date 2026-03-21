@@ -187,10 +187,60 @@ def generate_srt(audio_path: str, output_path: str = None, language: str = "ko")
     return generate_srt_local(audio_path, output_path, language)
 
 
+def _split_segment(seg: dict) -> list[dict]:
+    """긴 세그먼트를 반으로 나눈다. 자연스러운 끊김 위치를 찾음."""
+    text = seg.get("text", "").strip()
+    start = seg["start"]
+    end = seg["end"]
+
+    # 짧으면 그대로
+    if len(text) <= 20:
+        return [seg]
+
+    mid = len(text) // 2
+    # 중간 근처에서 자연스러운 끊김 위치 찾기
+    best_pos = mid
+    for offset in range(0, min(mid, 15)):
+        for pos in [mid + offset, mid - offset]:
+            if 0 < pos < len(text):
+                ch = text[pos]
+                if ch in " ,，、。.!?·":
+                    best_pos = pos + 1
+                    break
+                # 한국어 조사/어미 뒤에서 자르기
+                prev = text[pos - 1] if pos > 0 else ""
+                if prev in "은는이가을를에서도로의와과" and ch != " ":
+                    best_pos = pos
+                    break
+        else:
+            continue
+        break
+
+    text1 = text[:best_pos].strip()
+    text2 = text[best_pos:].strip()
+
+    if not text1 or not text2:
+        return [seg]
+
+    # 타이밍 비례 배분
+    ratio = len(text1) / len(text)
+    mid_time = start + (end - start) * ratio
+
+    return [
+        {"start": start, "end": mid_time, "text": text1},
+        {"start": mid_time, "end": end, "text": text2},
+    ]
+
+
 def _segments_to_srt(segments: list) -> str:
-    """Whisper segments를 SRT 형식으로 변환"""
+    """Whisper segments를 SRT 형식으로 변환 (긴 구간은 반으로 분할)"""
+    # 모든 세그먼트를 반으로 나누기
+    split_segments = []
+    for seg in segments:
+        split_segments.extend(_split_segment(seg))
+
     lines = []
-    for i, seg in enumerate(segments, 1):
+    for i, seg in enumerate(split_segments, 1):
         start = _format_timestamp(seg["start"])
         end = _format_timestamp(seg["end"])
         text = seg.get("text", "").strip()
