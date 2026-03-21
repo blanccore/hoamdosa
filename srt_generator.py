@@ -187,6 +187,105 @@ def generate_srt(audio_path: str, output_path: str = None, language: str = "ko")
     return generate_srt_local(audio_path, output_path, language)
 
 
+def generate_srt_with_script(
+    audio_path: str,
+    script_text: str,
+    output_path: str = None,
+    language: str = "ko",
+) -> str:
+    """
+    대본 기반 SRT 생성.
+    Whisper로 타이밍을 가져오고, 사용자 대본 텍스트를 매칭한다.
+
+    Args:
+        audio_path: 음성 파일 경로
+        script_text: 원본 대본 텍스트
+        output_path: SRT 출력 경로
+        language: 언어 코드
+
+    Returns:
+        SRT 파일 경로
+    """
+    import re
+    import requests
+
+    if not output_path:
+        output_path = str(Path(audio_path).with_suffix(".srt"))
+
+    print(f"[SRT] 대본 기반 SRT 생성 중: {Path(audio_path).name}")
+
+    # 1. 대본을 문장으로 분리
+    sentences = re.split(r"(?<=[.!?。\n])\s*", script_text)
+    sentences = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 1]
+
+    if not sentences:
+        print("[SRT] 대본이 비어있음, 일반 모드로 전환")
+        return generate_srt(audio_path, output_path, language)
+
+    # 2. Whisper로 word-level 타이밍 가져오기
+    if not OPENAI_API_KEY:
+        print("[SRT] API 키 없음, 일반 모드로 전환")
+        return generate_srt(audio_path, output_path, language)
+
+    with open(audio_path, "rb") as f:
+        response = requests.post(
+            "https://api.openai.com/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            files={"file": (Path(audio_path).name, f, "audio/mpeg")},
+            data={
+                "model": "whisper-1",
+                "response_format": "verbose_json",
+                "timestamp_granularities[]": "segment",
+                "language": language,
+            },
+            timeout=300,
+        )
+
+    if response.status_code != 200:
+        print(f"[SRT] Whisper API 에러, 일반 모드로 전환")
+        return generate_srt(audio_path, output_path, language)
+
+    result = response.json()
+    whisper_segments = result.get("segments", [])
+
+    if not whisper_segments:
+        return generate_srt(audio_path, output_path, language)
+
+    # 3. 대본 문장을 Whisper 세그먼트 타이밍에 매칭
+    total_whisper_chars = sum(len(seg.get("text", "").strip()) for seg in whisper_segments)
+    total_script_chars = sum(len(s) for s in sentences)
+
+    # 전체 오디오 시간
+    audio_start = whisper_segments[0]["start"]
+    audio_end = whisper_segments[-1]["end"]
+    total_duration = audio_end - audio_start
+
+    # 문장별 타이밍을 글자 수 비례로 배분
+    matched_segments = []
+    current_time = audio_start
+
+    for sentence in sentences:
+        ratio = len(sentence) / total_script_chars
+        duration = total_duration * ratio
+        seg_end = current_time + duration
+
+        matched_segments.append({
+            "start": current_time,
+            "end": seg_end,
+            "text": sentence,
+        })
+        current_time = seg_end
+
+    # 4. SRT 생성 (분할 적용)
+    srt_content = _segments_to_srt(matched_segments)
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(srt_content)
+
+    print(f"[SRT] ✅ 대본 기반 완료: {len(matched_segments)}문장 → {output_path}")
+    return output_path
+
+
 def _split_segment(seg: dict) -> list[dict]:
     """긴 세그먼트를 반으로 나눈다. 공백 기준으로만 자름."""
     text = seg.get("text", "").strip()
