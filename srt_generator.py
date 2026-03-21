@@ -292,22 +292,22 @@ def _split_segment(seg: dict) -> list[dict]:
     if len(text) <= 25:
         return [seg]
 
-    mid = len(text) // 2
+    mid = len(text) * 2 // 5  # 40% 지점 (앞쪽 짧게)
 
     # 1순위: 쉼표+공백 뒤에서 자르기
     best_pos = None
     for offset in range(0, len(text) // 2):
-        for pos in [mid + offset, mid - offset]:
+        for pos in [mid - offset, mid + offset]:
             if 1 < pos < len(text) and text[pos - 1] == "," and text[pos] == " ":
                 best_pos = pos + 1
                 break
         if best_pos is not None:
             break
 
-    # 2순위: 일반 공백
+    # 2순위: 일반 공백 (앞쪽 우선)
     if best_pos is None:
         for offset in range(0, min(mid, 20)):
-            for pos in [mid + offset, mid - offset]:
+            for pos in [mid - offset, mid + offset]:
                 if 0 < pos < len(text) and text[pos] == " ":
                     best_pos = pos
                     break
