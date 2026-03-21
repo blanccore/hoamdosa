@@ -739,8 +739,8 @@ def main():
     app.add_handler(CommandHandler("history", history_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("keyword", keyword_command))
-    # 음성 메시지, 오디오 파일, 오디오 문서 처리
-    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO | filters.Document.AUDIO, handle_voice))
+    # 음성 메시지, 오디오 파일, 문서(오디오/PDF) 처리
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO | filters.Document.ALL, handle_voice))
     # 텍스트: 유튜브 링크 감지 또는 대본 처리
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
