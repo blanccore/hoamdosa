@@ -99,6 +99,27 @@ def cleanup_old_files(directory: Path, days: int = 7):
         print(f"[CLEANUP] {count}개 파일 삭제 ({days}일 이상 경과)")
 
 
+def _extract_pdf_text(pdf_path: str) -> str:
+    """PDF에서 텍스트 추출"""
+    try:
+        from PyPDF2 import PdfReader
+        reader = PdfReader(pdf_path)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() or ""
+        return text.strip()
+    except ImportError:
+        pass
+
+    # fallback: pdftotext (macOS)
+    import subprocess
+    result = subprocess.run(
+        ["pdftotext", "-layout", pdf_path, "-"],
+        capture_output=True, text=True, timeout=30,
+    )
+    return result.stdout.strip()
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """봇 시작 안내"""
     chat_id = update.effective_chat.id
@@ -571,8 +592,59 @@ async def _handle_srt_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await update.message.audio.get_file()
         input_ext = Path(update.message.audio.file_name or "audio.mp3").suffix or ".mp3"
     elif update.message.document:
+        doc_name = update.message.document.file_name or ""
+        doc_ext = Path(doc_name).suffix.lower()
+
+        # PDF → 대본으로 처리
+        if doc_ext == ".pdf":
+            audio_path = context.user_data.get("srt_audio_path")
+            if not audio_path or not os.path.exists(audio_path):
+                await update.message.reply_text("⚠️ 먼저 음성/오디오를 보내주세요!")
+                return
+
+            status_msg = await update.message.reply_text("📄 PDF 대본 읽는 중...")
+            try:
+                import subprocess
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                pdf_path = str(OUTPUT_DIR / f"srt_{timestamp}.pdf")
+                pdf_file = await update.message.document.get_file()
+                await pdf_file.download_to_drive(pdf_path)
+
+                # PDF → 텍스트
+                loop = asyncio.get_event_loop()
+                script_text = await loop.run_in_executor(None, lambda: _extract_pdf_text(pdf_path))
+                os.remove(pdf_path)
+
+                if not script_text.strip():
+                    await status_msg.edit_text("❌ PDF에서 텍스트를 추출할 수 없습니다")
+                    return
+
+                await status_msg.edit_text("📝 대본 기반 SRT 생성 중...")
+
+                from srt_generator import generate_srt_with_script
+                srt_path = str(OUTPUT_DIR / f"srt_{timestamp}.srt")
+                srt_path = await loop.run_in_executor(
+                    None, lambda: generate_srt_with_script(audio_path, script_text, srt_path)
+                )
+
+                with open(srt_path, "rb") as f:
+                    await update.message.reply_document(
+                        document=f,
+                        filename=f"자막_{timestamp}.srt",
+                        caption="📝 PDF 대본 기반 SRT 자막",
+                    )
+                await status_msg.edit_text("✅ PDF 대본 기반 SRT 완료!")
+                context.user_data.pop("srt_audio_path", None)
+                if os.path.exists(audio_path):
+                    os.remove(audio_path)
+
+            except Exception as e:
+                await status_msg.edit_text(f"❌ 에러: {str(e)[:200]}")
+            return
+
+        # 오디오 문서
         file = await update.message.document.get_file()
-        input_ext = Path(update.message.document.file_name or "audio.mp3").suffix or ".mp3"
+        input_ext = Path(doc_name).suffix or ".mp3"
     else:
         return
 

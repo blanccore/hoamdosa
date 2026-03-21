@@ -195,16 +195,7 @@ def generate_srt_with_script(
 ) -> str:
     """
     대본 기반 SRT 생성.
-    Whisper로 타이밍을 가져오고, 사용자 대본 텍스트를 매칭한다.
-
-    Args:
-        audio_path: 음성 파일 경로
-        script_text: 원본 대본 텍스트
-        output_path: SRT 출력 경로
-        language: 언어 코드
-
-    Returns:
-        SRT 파일 경로
+    Whisper word-level 타임스탬프로 정확한 싱크를 맞춘다.
     """
     import re
     import requests
@@ -214,16 +205,15 @@ def generate_srt_with_script(
 
     print(f"[SRT] 대본 기반 SRT 생성 중: {Path(audio_path).name}")
 
-    # 1. 대본을 문장으로 분리 (줄바꾼만 기준, 쉴표/온점 무시)
+    # 1. 대본을 문장으로 분리 (줄바꿈만 기준)
     sentences = [s.strip() for s in script_text.split("\n") if s.strip() and len(s.strip()) > 1]
 
     if not sentences:
         print("[SRT] 대본이 비어있음, 일반 모드로 전환")
         return generate_srt(audio_path, output_path, language)
 
-    # 2. Whisper로 word-level 타이밍 가져오기
+    # 2. Whisper word-level 타임스탬프
     if not OPENAI_API_KEY:
-        print("[SRT] API 키 없음, 일반 모드로 전환")
         return generate_srt(audio_path, output_path, language)
 
     with open(audio_path, "rb") as f:
@@ -234,53 +224,53 @@ def generate_srt_with_script(
             data={
                 "model": "whisper-1",
                 "response_format": "verbose_json",
-                "timestamp_granularities[]": "segment",
+                "timestamp_granularities[]": "word",
                 "language": language,
             },
             timeout=300,
         )
 
     if response.status_code != 200:
-        print(f"[SRT] Whisper API 에러, 일반 모드로 전환")
+        print(f"[SRT] Whisper API 에러 ({response.status_code}), 일반 모드로 전환")
         return generate_srt(audio_path, output_path, language)
 
     result = response.json()
-    whisper_segments = result.get("segments", [])
+    words = result.get("words", [])
 
-    if not whisper_segments:
+    if not words:
+        # word 타임스탬프 없으면 segment 기반 fallback
+        print("[SRT] word 타임스탬프 없음, segment 기반 fallback")
         return generate_srt(audio_path, output_path, language)
 
-    # 3. Whisper 세그먼트 타이밍을 대본 문장에 직접 매칭
-    n_sentences = len(sentences)
-    n_whisper = len(whisper_segments)
+    # 3. 대본 문장별로 Whisper words를 순차 매칭 (글자수 기반)
+    total_script_chars = sum(len(s.replace(" ", "")) for s in sentences)
+    total_words = len(words)
 
     matched_segments = []
-    if n_sentences <= n_whisper:
-        # 문장이 적으면: Whisper 세그먼트를 문장수로 균등 분배
-        segs_per = n_whisper / n_sentences
-        for i, sentence in enumerate(sentences):
-            start_idx = int(i * segs_per)
-            end_idx = int((i + 1) * segs_per) - 1
-            end_idx = min(end_idx, n_whisper - 1)
+    word_idx = 0
+
+    for sentence in sentences:
+        # 이 문장이 차지할 단어 수 (글자수 비례)
+        sentence_chars = len(sentence.replace(" ", ""))
+        ratio = sentence_chars / total_script_chars
+        n_words_for_sentence = max(1, round(total_words * ratio))
+
+        # 단어 범위 할당
+        start_word_idx = word_idx
+        end_word_idx = min(word_idx + n_words_for_sentence - 1, len(words) - 1)
+
+        # 마지막 문장은 남은 단어 모두 할당
+        if sentence == sentences[-1]:
+            end_word_idx = len(words) - 1
+
+        if start_word_idx < len(words):
             matched_segments.append({
-                "start": whisper_segments[start_idx]["start"],
-                "end": whisper_segments[end_idx]["end"],
+                "start": words[start_word_idx]["start"],
+                "end": words[end_word_idx]["end"],
                 "text": sentence,
             })
-    else:
-        # 문장이 더 많으면: 전체 시간을 문장수로 균등 분배
-        audio_start = whisper_segments[0]["start"]
-        audio_end = whisper_segments[-1]["end"]
-        total_duration = audio_end - audio_start
-        dur_per = total_duration / n_sentences
-        for i, sentence in enumerate(sentences):
-            seg_start = audio_start + i * dur_per
-            seg_end = audio_start + (i + 1) * dur_per
-            matched_segments.append({
-                "start": seg_start,
-                "end": seg_end,
-                "text": sentence,
-            })
+
+        word_idx = end_word_idx + 1
 
     # 4. SRT 생성 (분할 적용)
     srt_content = _segments_to_srt(matched_segments)
@@ -288,7 +278,7 @@ def generate_srt_with_script(
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(srt_content)
 
-    print(f"[SRT] ✅ 대본 기반 완료: {len(matched_segments)}문장 → {output_path}")
+    print(f"[SRT] ✅ 대본 기반 완료: {len(matched_segments)}문장, {len(words)} words → {output_path}")
     return output_path
 
 
@@ -299,12 +289,12 @@ def _split_segment(seg: dict) -> list[dict]:
     end = seg["end"]
 
     # 짧으면 그대로
-    if len(text) <= 20:
+    if len(text) <= 25:
         return [seg]
 
     mid = len(text) // 2
 
-    # 1순위: 쉴표+공백 뒤에서 자르기 (더 넓은 범위 탐색)
+    # 1순위: 쉼표+공백 뒤에서 자르기
     best_pos = None
     for offset in range(0, len(text) // 2):
         for pos in [mid + offset, mid - offset]:
@@ -324,7 +314,6 @@ def _split_segment(seg: dict) -> list[dict]:
             if best_pos is not None:
                 break
 
-    # 못 찾으면 분할 안 함
     if best_pos is None:
         return [seg]
 
@@ -334,14 +323,14 @@ def _split_segment(seg: dict) -> list[dict]:
     if not text1 or not text2:
         return [seg]
 
-    # 타이밍 비례 배분
     ratio = len(text1) / len(text)
     mid_time = start + (end - start) * ratio
 
-    return [
-        {"start": start, "end": mid_time, "text": text1},
-        {"start": mid_time, "end": end, "text": text2},
-    ]
+    seg1 = {"start": start, "end": mid_time, "text": text1}
+    seg2 = {"start": mid_time, "end": end, "text": text2}
+
+    # 재귀: 나뉜 결과도 길면 다시 나누기
+    return _split_segment(seg1) + _split_segment(seg2)
 
 
 def _clean_text(text):
