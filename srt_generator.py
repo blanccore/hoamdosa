@@ -250,30 +250,37 @@ def generate_srt_with_script(
     if not whisper_segments:
         return generate_srt(audio_path, output_path, language)
 
-    # 3. 대본 문장을 Whisper 세그먼트 타이밍에 매칭
-    total_whisper_chars = sum(len(seg.get("text", "").strip()) for seg in whisper_segments)
-    total_script_chars = sum(len(s) for s in sentences)
+    # 3. Whisper 세그먼트 타이밍을 대본 문장에 직접 매칭
+    n_sentences = len(sentences)
+    n_whisper = len(whisper_segments)
 
-    # 전체 오디오 시간
-    audio_start = whisper_segments[0]["start"]
-    audio_end = whisper_segments[-1]["end"]
-    total_duration = audio_end - audio_start
-
-    # 문장별 타이밍을 글자 수 비례로 배분
     matched_segments = []
-    current_time = audio_start
-
-    for sentence in sentences:
-        ratio = len(sentence) / total_script_chars
-        duration = total_duration * ratio
-        seg_end = current_time + duration
-
-        matched_segments.append({
-            "start": current_time,
-            "end": seg_end,
-            "text": sentence,
-        })
-        current_time = seg_end
+    if n_sentences <= n_whisper:
+        # 문장이 적으면: Whisper 세그먼트를 문장수로 균등 분배
+        segs_per = n_whisper / n_sentences
+        for i, sentence in enumerate(sentences):
+            start_idx = int(i * segs_per)
+            end_idx = int((i + 1) * segs_per) - 1
+            end_idx = min(end_idx, n_whisper - 1)
+            matched_segments.append({
+                "start": whisper_segments[start_idx]["start"],
+                "end": whisper_segments[end_idx]["end"],
+                "text": sentence,
+            })
+    else:
+        # 문장이 더 많으면: 전체 시간을 문장수로 균등 분배
+        audio_start = whisper_segments[0]["start"]
+        audio_end = whisper_segments[-1]["end"]
+        total_duration = audio_end - audio_start
+        dur_per = total_duration / n_sentences
+        for i, sentence in enumerate(sentences):
+            seg_start = audio_start + i * dur_per
+            seg_end = audio_start + (i + 1) * dur_per
+            matched_segments.append({
+                "start": seg_start,
+                "end": seg_end,
+                "text": sentence,
+            })
 
     # 4. SRT 생성 (분할 적용)
     srt_content = _segments_to_srt(matched_segments)
@@ -337,6 +344,14 @@ def _split_segment(seg: dict) -> list[dict]:
     ]
 
 
+def _clean_text(text):
+    """자막 텍스트에서 쉼표, 온점 제거"""
+    import re
+    text = text.replace(",", "").replace(".", "").replace("\uff0c", "").replace("\u3002", "")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def _segments_to_srt(segments: list) -> str:
     """Whisper segments를 SRT 형식으로 변환 (긴 구간은 반으로 분할)"""
     # 모든 세그먼트를 반으로 나누기
@@ -348,7 +363,9 @@ def _segments_to_srt(segments: list) -> str:
     for i, seg in enumerate(split_segments, 1):
         start = _format_timestamp(seg["start"])
         end = _format_timestamp(seg["end"])
-        text = seg.get("text", "").strip()
+        text = _clean_text(seg.get("text", ""))
+        if not text:
+            continue
         lines.append(f"{i}")
         lines.append(f"{start} --> {end}")
         lines.append(text)
