@@ -288,8 +288,8 @@ def _split_segment(seg: dict) -> list[dict]:
     start = seg["start"]
     end = seg["end"]
 
-    # 짧으면 그대로
-    if len(text) <= 25:
+    # Whisper 세그먼트는 무음 기준이므로 최대한 유지 (아주 긴 것만 분할)
+    if len(text) <= 40:
         return [seg]
 
     mid = len(text) * 2 // 5  # 40% 지점 (앞쪽 짧게)
