@@ -117,7 +117,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━\n"
         "📋 *명령어*\n"
         f"`/speed 1.2` — 배속 변경 (현재: {speed}x)\n"
-        "`/stt` — SRT 전용 모드 전환\n"
+        "`/srt` — SRT 전용 모드 전환\n"
         "`/history` — 최근 처리 파일 목록\n"
         "`/status` — 봇 상태 확인\n\n"
         f"🔑 Chat ID: `{chat_id}`",
@@ -493,8 +493,8 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def stt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/stt 명령어: SRT 전용 모드 토글"""
+async def srt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/srt 명령어: SRT 전용 모드 토글"""
     if not _is_allowed(update.effective_chat.id):
         return
     chat_id = update.effective_chat.id
@@ -505,7 +505,7 @@ async def stt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📝 *STT 모드 ON*\n"
             "음성 보내면 → SRT 자막만 회신\n"
             "(배속/무음 처리 없음)\n\n"
-            "해제: /stt",
+            "해제: /srt",
             parse_mode="Markdown",
         )
     else:
@@ -561,13 +561,6 @@ async def _handle_stt_only(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption="📝 SRT 자막 (STT 모드)",
             )
 
-        # 텍스트로도 보내기
-        with open(srt_path, "r", encoding="utf-8") as f:
-            srt_text = f.read()
-        if len(srt_text) > 4000:
-            srt_text = srt_text[:4000] + "\n...(이하 생략)"
-        await update.message.reply_text(srt_text)
-
         await status_msg.edit_text("✅ 자막 생성 완료!")
 
         # 정리
@@ -598,7 +591,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("speed", speed_command))
-    app.add_handler(CommandHandler("stt", stt_command))
+    app.add_handler(CommandHandler("srt", srt_command))
     app.add_handler(CommandHandler("history", history_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("keyword", keyword_command))

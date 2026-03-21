@@ -188,7 +188,7 @@ def generate_srt(audio_path: str, output_path: str = None, language: str = "ko")
 
 
 def _split_segment(seg: dict) -> list[dict]:
-    """긴 세그먼트를 반으로 나눈다. 자연스러운 끊김 위치를 찾음."""
+    """긴 세그먼트를 반으로 나눈다. 공백 기준으로만 자름."""
     text = seg.get("text", "").strip()
     start = seg["start"]
     end = seg["end"]
@@ -198,23 +198,30 @@ def _split_segment(seg: dict) -> list[dict]:
         return [seg]
 
     mid = len(text) // 2
-    # 중간 근처에서 자연스러운 끊김 위치 찾기
-    best_pos = mid
-    for offset in range(0, min(mid, 15)):
+
+    # 중간 근처에서 공백/구두점 위치 찾기 (공백 우선)
+    best_pos = None
+    for offset in range(0, min(mid, 20)):
         for pos in [mid + offset, mid - offset]:
-            if 0 < pos < len(text):
-                ch = text[pos]
-                if ch in " ,，、。.!?·":
+            if 0 < pos < len(text) and text[pos] == " ":
+                best_pos = pos
+                break
+        if best_pos is not None:
+            break
+
+    # 공백 없으면 쉼표/마침표
+    if best_pos is None:
+        for offset in range(0, min(mid, 20)):
+            for pos in [mid + offset, mid - offset]:
+                if 0 < pos < len(text) and text[pos] in ",，.。!?":
                     best_pos = pos + 1
                     break
-                # 한국어 조사/어미 뒤에서 자르기
-                prev = text[pos - 1] if pos > 0 else ""
-                if prev in "은는이가을를에서도로의와과" and ch != " ":
-                    best_pos = pos
-                    break
-        else:
-            continue
-        break
+            if best_pos is not None:
+                break
+
+    # 그래도 없으면 분할 안 함
+    if best_pos is None:
+        return [seg]
 
     text1 = text[:best_pos].strip()
     text2 = text[best_pos:].strip()
