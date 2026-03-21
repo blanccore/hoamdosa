@@ -214,9 +214,8 @@ def generate_srt_with_script(
 
     print(f"[SRT] 대본 기반 SRT 생성 중: {Path(audio_path).name}")
 
-    # 1. 대본을 문장으로 분리
-    sentences = re.split(r"(?<=[.!?。\n])\s*", script_text)
-    sentences = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 1]
+    # 1. 대본을 문장으로 분리 (줄바꾼만 기준, 쉴표/온점 무시)
+    sentences = [s.strip() for s in script_text.split("\n") if s.strip() and len(s.strip()) > 1]
 
     if not sentences:
         print("[SRT] 대본이 비어있음, 일반 모드로 전환")
@@ -287,7 +286,7 @@ def generate_srt_with_script(
 
 
 def _split_segment(seg: dict) -> list[dict]:
-    """긴 세그먼트를 반으로 나눈다. 공백 기준으로만 자름."""
+    """긴 세그먼트를 반으로 나눈다. 쉴표+공백 우선, 그다음 공백."""
     text = seg.get("text", "").strip()
     start = seg["start"]
     end = seg["end"]
@@ -298,27 +297,27 @@ def _split_segment(seg: dict) -> list[dict]:
 
     mid = len(text) // 2
 
-    # 중간 근처에서 공백/구두점 위치 찾기 (공백 우선)
+    # 1순위: 쉴표+공백 뒤에서 자르기 (더 넓은 범위 탐색)
     best_pos = None
-    for offset in range(0, min(mid, 20)):
+    for offset in range(0, len(text) // 2):
         for pos in [mid + offset, mid - offset]:
-            if 0 < pos < len(text) and text[pos] == " ":
-                best_pos = pos
+            if 1 < pos < len(text) and text[pos - 1] == "," and text[pos] == " ":
+                best_pos = pos + 1
                 break
         if best_pos is not None:
             break
 
-    # 공백 없으면 쉼표/마침표
+    # 2순위: 일반 공백
     if best_pos is None:
         for offset in range(0, min(mid, 20)):
             for pos in [mid + offset, mid - offset]:
-                if 0 < pos < len(text) and text[pos] in ",，.。!?":
-                    best_pos = pos + 1
+                if 0 < pos < len(text) and text[pos] == " ":
+                    best_pos = pos
                     break
             if best_pos is not None:
                 break
 
-    # 그래도 없으면 분할 안 함
+    # 못 찾으면 분할 안 함
     if best_pos is None:
         return [seg]
 
