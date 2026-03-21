@@ -342,14 +342,9 @@ def _clean_text(text):
 
 
 def _segments_to_srt(segments: list) -> str:
-    """Whisper segments를 SRT 형식으로 변환 (긴 구간은 반으로 분할)"""
-    # 모든 세그먼트를 반으로 나누기
-    split_segments = []
-    for seg in segments:
-        split_segments.extend(_split_segment(seg))
-
+    """Whisper segments를 SRT 형식으로 변환 (무음 기준 그대로)"""
     lines = []
-    for i, seg in enumerate(split_segments, 1):
+    for i, seg in enumerate(segments, 1):
         start = _format_timestamp(seg["start"])
         end = _format_timestamp(seg["end"])
         text = _clean_text(seg.get("text", ""))

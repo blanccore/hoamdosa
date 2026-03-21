@@ -233,7 +233,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         final_path, silences = result
 
-        # SRT 자막 생성
+        # SRT 자막 생성 (배속 전 원본 기준)
         srt_path = None
         try:
             await status_msg.edit_text("📝 자막 생성 중...")
