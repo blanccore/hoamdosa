@@ -526,65 +526,23 @@ async def srt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     current = _user_stt_mode.get(chat_id, False)
     _user_stt_mode[chat_id] = not current
-    # 모드 전환 시 저장된 오디오 초기화
-    context.user_data.pop("srt_audio_path", None)
     if not current:
         await update.message.reply_text(
-            "📝 *SRT 모드 ON*\n\n"
-            "1️⃣ 음성/오디오 보내기\n"
-            "2️⃣ 대본 텍스트 보내기\n"
-            "→ 대본 기반 정확한 SRT 생성!\n\n"
-            "💡 대본 없이 음성만 보내면 Whisper 자동 인식\n"
+            "📝 *SRT 모드 ON*\n"
+            "음성 보내면 → SRT 자막만 회신\n"
+            "(배속/무음 처리 없음)\n\n"
             "해제: /srt",
             parse_mode="Markdown",
         )
     else:
-        context.user_data.pop("srt_audio_path", None)
         await update.message.reply_text("🎤 *일반 모드 복귀* (배속 + 무음 + SRT)", parse_mode="Markdown")
 
 
 async def _handle_srt_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """SRT 모드: 오디오 또는 텍스트 처리"""
-
-    # 텍스트가 들어온 경우 — 대본으로 SRT 생성
+    """SRT 전용: 음성 → SRT만 회신"""
     if update.message.text:
-        audio_path = context.user_data.get("srt_audio_path")
-        if not audio_path or not os.path.exists(audio_path):
-            await update.message.reply_text("⚠️ 먼저 음성/오디오를 보내주세요!")
-            return
+        return  # 텍스트 무시
 
-        script_text = update.message.text.strip()
-        status_msg = await update.message.reply_text("📝 대본 기반 SRT 생성 중...")
-
-        try:
-            from srt_generator import generate_srt_with_script
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            srt_path = str(OUTPUT_DIR / f"srt_{timestamp}.srt")
-
-            loop = asyncio.get_event_loop()
-            srt_path = await loop.run_in_executor(
-                None, lambda: generate_srt_with_script(audio_path, script_text, srt_path)
-            )
-
-            with open(srt_path, "rb") as f:
-                await update.message.reply_document(
-                    document=f,
-                    filename=f"자막_{timestamp}.srt",
-                    caption="📝 대본 기반 SRT 자막",
-                )
-
-            await status_msg.edit_text("✅ 대본 기반 SRT 완료!")
-
-            # 정리
-            context.user_data.pop("srt_audio_path", None)
-            if os.path.exists(audio_path):
-                os.remove(audio_path)
-
-        except Exception as e:
-            await status_msg.edit_text(f"❌ 에러: {str(e)[:200]}")
-        return
-
-    # 오디오가 들어온 경우
     if update.message.voice:
         file = await update.message.voice.get_file()
         input_ext = ".ogg"
@@ -592,88 +550,53 @@ async def _handle_srt_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await update.message.audio.get_file()
         input_ext = Path(update.message.audio.file_name or "audio.mp3").suffix or ".mp3"
     elif update.message.document:
-        doc_name = update.message.document.file_name or ""
-        doc_ext = Path(doc_name).suffix.lower()
-
-        # PDF → 대본으로 처리
-        if doc_ext == ".pdf":
-            audio_path = context.user_data.get("srt_audio_path")
-            if not audio_path or not os.path.exists(audio_path):
-                await update.message.reply_text("⚠️ 먼저 음성/오디오를 보내주세요!")
-                return
-
-            status_msg = await update.message.reply_text("📄 PDF 대본 읽는 중...")
-            try:
-                import subprocess
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                pdf_path = str(OUTPUT_DIR / f"srt_{timestamp}.pdf")
-                pdf_file = await update.message.document.get_file()
-                await pdf_file.download_to_drive(pdf_path)
-
-                # PDF → 텍스트
-                loop = asyncio.get_event_loop()
-                script_text = await loop.run_in_executor(None, lambda: _extract_pdf_text(pdf_path))
-                os.remove(pdf_path)
-
-                if not script_text.strip():
-                    await status_msg.edit_text("❌ PDF에서 텍스트를 추출할 수 없습니다")
-                    return
-
-                await status_msg.edit_text("📝 대본 기반 SRT 생성 중...")
-
-                from srt_generator import generate_srt_with_script
-                srt_path = str(OUTPUT_DIR / f"srt_{timestamp}.srt")
-                srt_path = await loop.run_in_executor(
-                    None, lambda: generate_srt_with_script(audio_path, script_text, srt_path)
-                )
-
-                with open(srt_path, "rb") as f:
-                    await update.message.reply_document(
-                        document=f,
-                        filename=f"자막_{timestamp}.srt",
-                        caption="📝 PDF 대본 기반 SRT 자막",
-                    )
-                await status_msg.edit_text("✅ PDF 대본 기반 SRT 완료!")
-                context.user_data.pop("srt_audio_path", None)
-                if os.path.exists(audio_path):
-                    os.remove(audio_path)
-
-            except Exception as e:
-                await status_msg.edit_text(f"❌ 에러: {str(e)[:200]}")
-            return
-
-        # 오디오 문서
         file = await update.message.document.get_file()
-        input_ext = Path(doc_name).suffix or ".mp3"
+        input_ext = Path(update.message.document.file_name or "audio.mp3").suffix or ".mp3"
     else:
         return
 
-    import subprocess
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    input_path = str(OUTPUT_DIR / f"srt_{timestamp}_input{input_ext}")
-    await file.download_to_drive(input_path)
+    status_msg = await update.message.reply_text("📝 자막 생성 중...")
 
-    loop = asyncio.get_event_loop()
+    try:
+        import subprocess
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        input_path = str(OUTPUT_DIR / f"srt_{timestamp}_input{input_ext}")
+        await file.download_to_drive(input_path)
 
-    # OGG → MP3
-    if input_ext == ".ogg":
-        mp3_path = str(OUTPUT_DIR / f"srt_{timestamp}_input.mp3")
-        await loop.run_in_executor(None, lambda: subprocess.run(
-            ["ffmpeg", "-y", "-i", input_path, "-c:a", "libmp3lame", "-b:a", "192k", mp3_path],
-            capture_output=True, timeout=600,
-        ))
-        os.remove(input_path)
-        input_path = mp3_path
+        loop = asyncio.get_event_loop()
 
-    # 오디오 저장하고 대본 대기
-    context.user_data["srt_audio_path"] = input_path
-    await update.message.reply_text(
-        "✅ 오디오 저장 완료!\n\n"
-        "📝 *대본 텍스트를 보내주세요*\n"
-        "→ 대본 기반 정확한 SRT를 생성합니다\n\n"
-        "💡 대본 없이 SRT 생성: `/srt_now`",
-        parse_mode="Markdown",
-    )
+        # OGG → MP3
+        if input_ext == ".ogg":
+            mp3_path = str(OUTPUT_DIR / f"srt_{timestamp}_input.mp3")
+            await loop.run_in_executor(None, lambda: subprocess.run(
+                ["ffmpeg", "-y", "-i", input_path, "-c:a", "libmp3lame", "-b:a", "192k", mp3_path],
+                capture_output=True, timeout=600,
+            ))
+            os.remove(input_path)
+            input_path = mp3_path
+
+        # SRT 생성
+        from srt_generator import generate_srt
+        srt_path = str(OUTPUT_DIR / f"srt_{timestamp}.srt")
+        srt_path = await loop.run_in_executor(
+            None, lambda: generate_srt(input_path, srt_path)
+        )
+
+        # SRT 회신
+        with open(srt_path, "rb") as f:
+            await update.message.reply_document(
+                document=f,
+                filename=f"자막_{timestamp}.srt",
+                caption="📝 SRT 자막",
+            )
+
+        await status_msg.edit_text("✅ 자막 생성 완료!")
+
+        if os.path.exists(input_path):
+            os.remove(input_path)
+
+    except Exception as e:
+        await status_msg.edit_text(f"❌ 에러: {str(e)[:200]}")
 
 
 async def srt_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
