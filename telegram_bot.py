@@ -204,34 +204,36 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             os.remove(input_path)
             input_path = mp3_input
 
-        # 배속 처리
-        chat_id = update.effective_chat.id
-        speed = _user_speed.get(chat_id, DEFAULT_SPEED)
-        await status_msg.edit_text(f"⚡ {speed}배속 처리 중...")
-        import subprocess
-        speed_path = str(OUTPUT_DIR / f"tg_{timestamp}_speed.mp3")
-        await loop.run_in_executor(None, lambda: subprocess.run(
-            ["ffmpeg", "-y", "-i", input_path,
-             "-filter:a", f"atempo={speed}",
-             "-c:a", "libmp3lame", "-b:a", "192k", speed_path],
-            capture_output=True, timeout=600,
-        ))
-        os.remove(input_path)
-        input_path = speed_path
-
-        # 무음 처리
+        # 1단계: 무음 제거 (원본에서 정확한 감지)
         await status_msg.edit_text("✂️ 무음 편집 중...")
+        silence_output = str(OUTPUT_DIR / f"tg_{timestamp}_silence.mp3")
         result = await loop.run_in_executor(
             None,
             lambda: remove_silence(
                 input_path=input_path,
-                output_path=output_path,
+                output_path=silence_output,
                 threshold_db=SETTINGS.get("silence_threshold", -35),
                 min_duration=SETTINGS.get("silence_min_duration", 0.5),
             ),
         )
 
-        final_path, silences = result
+        silence_path, silences = result
+        os.remove(input_path)
+
+        # 2단계: 배속 처리 (무음 제거된 음성만 배속)
+        chat_id = update.effective_chat.id
+        speed = _user_speed.get(chat_id, DEFAULT_SPEED)
+        await status_msg.edit_text(f"⚡ {speed}배속 처리 중...")
+        import subprocess
+        await loop.run_in_executor(None, lambda: subprocess.run(
+            ["ffmpeg", "-y", "-i", silence_path,
+             "-filter:a", f"atempo={speed}",
+             "-c:a", "libmp3lame", "-b:a", "192k", output_path],
+            capture_output=True, timeout=600,
+        ))
+        os.remove(silence_path)
+
+        final_path = output_path
 
         # SRT 자막 생성 (배속 전 원본 기준)
         srt_path = None
